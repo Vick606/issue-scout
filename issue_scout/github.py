@@ -68,6 +68,28 @@ def get_issue(owner: str, repo: str, number: int) -> dict[str, Any]:
     return response.json()
 
 
+def list_pull_files(owner: str, repo: str, number: int) -> list[dict[str, Any]]:
+    """Fetch the list of files changed by a PR, with per-file stats.
+
+    Each entry has at minimum: filename, additions, deletions, status.
+    """
+    results: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        response = _get(
+            f"/repos/{owner}/{repo}/pulls/{number}/files",
+            params={"per_page": 100, "page": page},
+        )
+        batch = response.json()
+        if not batch:
+            break
+        results.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    return results
+
+
 def search_merged_prs_linked_to_issues(
     owner: str, repo: str, limit: int = 30
 ) -> list[dict[str, Any]]:
@@ -111,8 +133,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
     owner, repo = sys.argv[1], sys.argv[2]
-    prs = search_merged_prs_linked_to_issues(owner, repo, limit=5)
-    print(f"merged PRs linked to issues: {len(prs)}")
+    prs = search_merged_prs_linked_to_issues(owner, repo, limit=3)
     for pr in prs:
-        issues = extract_issue_numbers(pr.get("body") or "")
-        print(f"  PR #{pr['number']}: {pr['title'][:50]} -> issues {issues}")
+        files = list_pull_files(owner, repo, pr["number"])
+        print(f"PR #{pr['number']}: {len(files)} files")
+        for f in files[:3]:
+            print(f"  {f['filename']}  +{f['additions']}/-{f['deletions']}")
