@@ -6,8 +6,10 @@ from typing import Any
 from issue_scout.github import (
     extract_issue_numbers,
     get_issue,
+    list_pull_files,
     search_merged_prs_linked_to_issues,
 )
+from issue_scout.scoring import score_files, suitability_score
 
 
 def filter_issues_with_merged_prs(
@@ -15,12 +17,14 @@ def filter_issues_with_merged_prs(
     repo: str,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """Return issues that were closed by a merged PR.
+    """Return issues closed by a merged PR, enriched with diff features.
 
-    Two-stage approach:
+    Pipeline:
       1. Search merged PRs that are linked to issues.
       2. Extract the linked issue number from each PR body.
-      3. Fetch the issue details to enrich the result.
+      3. Fetch the issue to confirm it is closed.
+      4. Fetch the PR file list and compute features and score.
+      5. Sort by suitability score descending.
     """
     prs = search_merged_prs_linked_to_issues(owner, repo, limit=limit)
 
@@ -40,6 +44,11 @@ def filter_issues_with_merged_prs(
                 continue
             if issue.get("state") != "closed":
                 continue
+            try:
+                files = list_pull_files(owner, repo, pr["number"])
+            except Exception:
+                continue
+            features = score_files(files)
             results.append(
                 {
                     "issue_number": issue_number,
@@ -48,8 +57,11 @@ def filter_issues_with_merged_prs(
                     "linked_pr_title": pr.get("title", ""),
                     "merged_at": pr.get("closed_at"),
                     "issue_closed_at": issue.get("closed_at"),
+                    "features": features,
+                    "suitability_score": suitability_score(features),
                 }
             )
+    results.sort(key=lambda r: r["suitability_score"], reverse=True)
     return results
 
 
@@ -63,5 +75,8 @@ if __name__ == "__main__":
     hits = filter_issues_with_merged_prs(owner, repo, limit=cap)
     print(f"checked {cap} merged PRs, found {len(hits)} linked closed issues")
     for hit in hits[:10]:
-        print(f"  #{hit['issue_number']} <- PR #{hit['linked_pr_number']}")
-        print(f"     {hit['issue_title'][:70]}")
+        score = hit["suitability_score"]
+        tests = hit["features"]["test_files_changed"]
+        files = hit["features"]["files_changed"]
+        print(f"  score={score:5}  #{hit['issue_number']}  tests={tests} files={files}")
+        print(f"      {hit['issue_title'][:70]}")
